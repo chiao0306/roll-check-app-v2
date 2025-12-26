@@ -488,6 +488,7 @@ def agent_unified_check(combined_input, full_text_for_search, api_key, model_nam
     **必須** 生成以下兩行對照數據：
     1. `{{ "id": "內文項目加總", "val": "計算值", "calc": "計算" }}`
     2. `{{ "id": "統計表實交數量", "val": "目標值", "calc": "目標" }}`
+    
 
     {{
       "job_no": "工令編號",
@@ -495,6 +496,7 @@ def agent_unified_check(combined_input, full_text_for_search, api_key, model_nam
          {{
            "page": "頁碼",
            "item": "項目名稱",
+           "source_quote": "單據上的原始文字節錄",  # <--- 新增這一行
            "rule_used": "依據的規則 (請註明是 特規 還是 通用)",
            "issue_type": "數值超規 / 流程異常 / 數量不符 / 統計不符",
            "spec_logic": "判定標準",
