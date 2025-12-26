@@ -615,8 +615,9 @@ data_source = st.radio(
 )
 
 with st.container(border=True):
+    # --- 情況 A: 上傳照片 ---
     if data_source == "📸 上傳照片":
-        if st.session_state.get('source_mode') == 'json':
+        if st.session_state.get('source_mode') == 'json' or st.session_state.get('source_mode') == 'excel':
             st.session_state.photo_gallery = []
             st.session_state.source_mode = 'image'
 
@@ -642,42 +643,29 @@ with st.container(border=True):
                 st.session_state.auto_start_analysis = True
             components.html("""<script>window.parent.document.body.scrollTo(0, window.parent.document.body.scrollHeight);</script>""", height=0)
             st.rerun()
-            
-    else: 
+
+    # --- 情況 B: 上傳 JSON ---
+    elif data_source == "📂 上傳 JSON 檔":
         st.info("💡 請點擊下方按鈕，從你的資料夾選擇之前下載的 `.json` 檔。")
         uploaded_json = st.file_uploader("上傳JSON檔", type=['json'], key="json_uploader")
         
         if uploaded_json:
             try:
                 current_file_name = uploaded_json.name
-                last_loaded_file = st.session_state.get('last_loaded_json_name')
-
-                if current_file_name != last_loaded_file:
+                if st.session_state.get('last_loaded_json_name') != current_file_name:
                     json_data = json.load(uploaded_json)
-                    # ... (前段代碼) ...
-                    
-                    # 強制重置相簿
                     st.session_state.photo_gallery = []
                     st.session_state.source_mode = 'json'
                     st.session_state.last_loaded_json_name = current_file_name
                     
-                    # 引入 regex 模組 (如果上面沒引用的話)
                     import re
-
-                    # 還原資料
                     for page in json_data:
-                        # 【修改點】嘗試從 full_text 重新抓取真實頁碼
                         real_page = "Unknown"
                         full_text = page.get('full_text', '')
-                        
-                        # 使用跟 Azure 一樣的 Regex 抓取 "項次: 3/4"
                         if full_text:
                             match = re.search(r"(?:項次|Page|頁次|NO\.)[:\s]*(\d+)\s*[/／]\s*\d+", full_text, re.IGNORECASE)
                             if match:
                                 real_page = match.group(1)
-                        
-                        # 如果 JSON 裡原本就有存，也可以優先用存的
-                        # 但重抓一次比較保險
                         
                         st.session_state.photo_gallery.append({
                             'file': None,
@@ -685,43 +673,35 @@ with st.container(border=True):
                             'header_text': page.get('header_text'),
                             'full_text': full_text,
                             'raw_json': page.get('raw_json'),
-                            'real_page': real_page # <--- 把抓到的頁碼存進去！
+                            'real_page': real_page
                         })
                     
-                    # ... (後段代碼) ...
-                    
-                    st.toast(f"✅ 成功載入: {current_file_name}", icon="📂")
+                    st.toast(f"✅ 成功載入 JSON: {current_file_name}", icon="📂")
                     if st.session_state.enable_auto_analysis:
                         st.session_state.auto_start_analysis = True
                     st.rerun()
                 else:
-                    st.success(f"📂 目前載入檔案：**{uploaded_json.name}** (共 {len(st.session_state.photo_gallery)} 頁)")
+                    st.success(f"📂 目前載入 JSON：**{uploaded_json.name}**")
             except Exception as e:
                 st.error(f"JSON 檔案格式錯誤: {e}")
 
+    # --- 情況 C: 上傳 Excel (新增的放在這) ---
     elif data_source == "📊 上傳 Excel 檔":
         st.info("💡 上傳 Excel 檔後，系統會將表格內容轉換為文字供 AI 稽核。")
         uploaded_xlsx = st.file_uploader("上傳 Excel 檔", type=['xlsx', 'xls'], key="xlsx_uploader")
         
         if uploaded_xlsx:
             try:
-                # 為了避免重複讀取
                 current_file_name = uploaded_xlsx.name
                 if st.session_state.get('last_loaded_xlsx_name') != current_file_name:
-                    # 讀取 Excel 內的所有分頁
                     df_dict = pd.read_excel(uploaded_xlsx, sheet_name=None)
-                    
-                    # 清空現有的照片清單，改放 Excel 資料
                     st.session_state.photo_gallery = []
                     st.session_state.source_mode = 'excel'
                     st.session_state.last_loaded_xlsx_name = current_file_name
                     
                     for sheet_name, df in df_dict.items():
-                        # 將空值填補，並轉成 AI 看得懂的 Markdown 表格文字
                         df = df.fillna("")
                         md_table = df.to_markdown(index=False)
-                        
-                        # 模擬成跟照片一樣的格式，讓後面的 AI 分析可以直接用
                         st.session_state.photo_gallery.append({
                             'file': None,
                             'table_md': md_table,
@@ -730,15 +710,14 @@ with st.container(border=True):
                             'raw_json': None,
                             'real_page': sheet_name
                         })
-                    
                     st.toast(f"✅ 成功載入 Excel: {current_file_name}", icon="📊")
                     if st.session_state.enable_auto_analysis:
                         st.session_state.auto_start_analysis = True
                     st.rerun()
                 else:
-                    st.success(f"📊 目前載入 Excel：**{uploaded_xlsx.name}** (共 {len(st.session_state.photo_gallery)} 個分頁)")
+                    st.success(f"📊 目前載入 Excel：**{uploaded_xlsx.name}**")
             except Exception as e:
-                st.error(f"Excel 讀取失敗，請檢查格式: {e}")
+                st.error(f"Excel 讀取失敗: {e}")
 
 if st.session_state.photo_gallery:
     st.caption(f"已累積 {len(st.session_state.photo_gallery)} 頁文件")
