@@ -488,7 +488,7 @@ def agent_unified_check(combined_input, full_text_for_search, api_key, model_nam
     **必須** 生成以下兩行對照數據：
     1. `{{ "id": "內文項目加總", "val": "計算值", "calc": "計算" }}`
     2. `{{ "id": "統計表實交數量", "val": "目標值", "calc": "目標" }}`
-    
+    「重要：你必須在 source_quote 欄位中，精確節錄單據中導致你做此判斷的原始文字內容（例如：'本體未再生車修 12PC' 或 '128.5 / 128.6'）。這能證明你的判定是有所依據的。」
 
     {{
       "job_no": "工令編號",
@@ -584,13 +584,8 @@ def agent_unified_check(combined_input, full_text_for_search, api_key, model_nam
                 # 1. 基本防呆：沒有 item 名稱就踢掉
                 if not item_name: 
                     continue
-
-                # 2. 【關鍵修正】矛盾清洗
-                # 如果 AI 說「合格」，但這又不是「未匹配規則」的強制回報 -> 代表這是 AI 多嘴，踢掉！
-                if "合格" in reason and "未匹配" not in i_type:
-                    continue
                 
-                # 3. 如果 AI 說「合格」，且是「未匹配」，但 issue_type 卻寫「數值超規」 -> 強制修正類型
+                # 2. 如果 AI 說「合格」，且是「未匹配」，但 issue_type 卻寫「數值超規」 -> 強制修正類型
                 if "合格" in reason and "未匹配" in i_type:
                     i["issue_type"] = "⚠️未匹配規則" # 強制修正為黃色警告
 
@@ -961,6 +956,11 @@ if st.session_state.photo_gallery:
                 if spec: st.caption(f"標準: {spec}")
                 
                 if item.get('verification_logic'): st.caption(f"驗證: {item.get('verification_logic')}")
+                    
+                    # --- 新增：顯示 AI 抓取的原始文字證據 ---
+                quote = item.get('source_quote')
+                if quote:
+                    st.markdown(f"🔍 **原始憑據：** :orange-background[{quote}]")
                 
                 failures = item.get('failures', [])
                 if failures:
