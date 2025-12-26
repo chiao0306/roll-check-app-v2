@@ -610,7 +610,7 @@ st.title("🏭 交貨單稽核(單一代理)")
 
 data_source = st.radio(
     "請選擇資料來源：", 
-    ["📸 上傳照片", "📂 上傳 JSON 檔"], 
+    ["📸 上傳照片", "📂 上傳 JSON 檔", "📊 上傳 Excel 檔"], 
     horizontal=True
 )
 
@@ -698,6 +698,47 @@ with st.container(border=True):
                     st.success(f"📂 目前載入檔案：**{uploaded_json.name}** (共 {len(st.session_state.photo_gallery)} 頁)")
             except Exception as e:
                 st.error(f"JSON 檔案格式錯誤: {e}")
+
+                elif data_source == "📊 上傳 Excel 檔":
+        st.info("💡 上傳 Excel 檔後，系統會將表格內容轉換為文字供 AI 稽核。")
+        uploaded_xlsx = st.file_uploader("上傳 Excel 檔", type=['xlsx', 'xls'], key="xlsx_uploader")
+        
+        if uploaded_xlsx:
+            try:
+                # 為了避免重複讀取
+                current_file_name = uploaded_xlsx.name
+                if st.session_state.get('last_loaded_xlsx_name') != current_file_name:
+                    # 讀取 Excel 內的所有分頁
+                    df_dict = pd.read_excel(uploaded_xlsx, sheet_name=None)
+                    
+                    # 清空現有的照片清單，改放 Excel 資料
+                    st.session_state.photo_gallery = []
+                    st.session_state.source_mode = 'excel'
+                    st.session_state.last_loaded_xlsx_name = current_file_name
+                    
+                    for sheet_name, df in df_dict.items():
+                        # 將空值填補，並轉成 AI 看得懂的 Markdown 表格文字
+                        df = df.fillna("")
+                        md_table = df.to_markdown(index=False)
+                        
+                        # 模擬成跟照片一樣的格式，讓後面的 AI 分析可以直接用
+                        st.session_state.photo_gallery.append({
+                            'file': None,
+                            'table_md': md_table,
+                            'header_text': f"來源分頁: {sheet_name}",
+                            'full_text': f"Excel 內容 - 分頁 {sheet_name}\n" + md_table,
+                            'raw_json': None,
+                            'real_page': sheet_name
+                        })
+                    
+                    st.toast(f"✅ 成功載入 Excel: {current_file_name}", icon="📊")
+                    if st.session_state.enable_auto_analysis:
+                        st.session_state.auto_start_analysis = True
+                    st.rerun()
+                else:
+                    st.success(f"📊 目前載入 Excel：**{uploaded_xlsx.name}** (共 {len(st.session_state.photo_gallery)} 個分頁)")
+            except Exception as e:
+                st.error(f"Excel 讀取失敗，請檢查格式: {e}")
 
 if st.session_state.photo_gallery:
     st.caption(f"已累積 {len(st.session_state.photo_gallery)} 頁文件")
