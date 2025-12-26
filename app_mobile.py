@@ -699,7 +699,7 @@ with st.container(border=True):
             except Exception as e:
                 st.error(f"JSON 檔案格式錯誤: {e}")
 
-                elif data_source == "📊 上傳 Excel 檔":
+    elif data_source == "📊 上傳 Excel 檔":
         st.info("💡 上傳 Excel 檔後，系統會將表格內容轉換為文字供 AI 稽核。")
         uploaded_xlsx = st.file_uploader("上傳 Excel 檔", type=['xlsx', 'xls'], key="xlsx_uploader")
         
