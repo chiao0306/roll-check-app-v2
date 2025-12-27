@@ -753,8 +753,10 @@ if st.session_state.photo_gallery:
     if 'analysis_result_cache' not in st.session_state:
         st.session_state.analysis_result_cache = None
 
+   # --- 這是變數定義區 ---
     trigger_analysis = start_btn or is_auto_start
 
+    # --- 這是「執行分析」的大方塊 ---
     if trigger_analysis:
         total_start = time.time()
         status = st.empty()
@@ -766,29 +768,26 @@ if st.session_state.photo_gallery:
         
         ocr_start = time.time()
         
-def process_image_task(index, item):
-        index = int(index)
-        # 1. 檢查是否已有 OCR 資料，有的話直接回傳，不浪費錢跟時間
-        if item.get('table_md') and item.get('header_text') and item.get('full_text'):
-            r_page = item.get('real_page', str(index + 1))
-            return index, item['table_md'], item['header_text'], item['full_text'], None, r_page, None
-        
-        # 2. 如果沒有資料，就進行掃描
-        try:
-            if item.get('file') is None:
-                return index, None, None, None, None, None, "無圖片檔案"
+        # 定義小工具 (必須縮排在 if 裡面)
+        def process_image_task(index, item):
+            index = int(index)
+            if item.get('table_md') and item.get('header_text') and item.get('full_text'):
+                r_page = item.get('real_page', str(index + 1))
+                return index, item['table_md'], item['header_text'], item['full_text'], None, r_page, None
             
-            item['file'].seek(0)
-            # 這裡呼叫 Azure (注意底線 _ 代表我們丟棄原始 JSON 以省記憶體)
-            table_md, header, full, _, r_page = extract_layout_with_azure(item['file'], DOC_ENDPOINT, DOC_KEY)
-            
-            # 回傳 7 個數值
-            return index, table_md, header, full, None, r_page, None
-        except Exception as e:
-            return index, None, None, None, None, None, f"OCR失敗: {str(e)}"
-            
+            try:
+                if item.get('file') is None:
+                    return index, None, None, None, None, None, "無圖片檔案"
+                item['file'].seek(0)
+                # 修改：丟棄原始 JSON 省記憶體
+                table_md, header, full, _, r_page = extract_layout_with_azure(item['file'], DOC_ENDPOINT, DOC_KEY)
+                return index, table_md, header, full, None, r_page, None
+            except Exception as e:
+                return index, None, None, None, None, None, f"OCR失敗: {str(e)}"
+
         status.text(f"Azure 正在平行掃描 {total_imgs} 頁文件...")
 
+        # 這裡所有的動作都要縮排，代表「只有按下按鈕才執行」
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             futures = []
             for i, item in enumerate(st.session_state.photo_gallery):
@@ -799,116 +798,74 @@ def process_image_task(index, item):
                 idx, t_md, h_txt, f_txt, raw_j, r_page, err = future.result()
                 idx = int(idx)
                 
-                if err:
-                    st.error(f"第 {idx+1} 頁讀取失敗: {err}")
-                    extracted_data_list[idx] = None
-                else:
+                if not err:
                     st.session_state.photo_gallery[idx]['table_md'] = t_md
                     st.session_state.photo_gallery[idx]['header_text'] = h_txt
                     st.session_state.photo_gallery[idx]['full_text'] = f_txt
-                    st.session_state.photo_gallery[idx]['raw_json'] = raw_j
+                    st.session_state.photo_gallery[idx]['raw_json'] = None
                     st.session_state.photo_gallery[idx]['real_page'] = r_page
-                    st.session_state.photo_gallery[idx]['file'] = None
+                    st.session_state.photo_gallery[idx]['file'] = None # 釋放圖片
                     
                     extracted_data_list[idx] = {
                         "page": r_page,
                         "table": t_md or "", 
                         "header_text": h_txt or ""
                     }
-                
                 completed_count += 1
                 progress_bar.progress(completed_count / (total_imgs + 1))
         
         for i, data in enumerate(extracted_data_list):
             if data and isinstance(data, dict):
-                page_idx = i
-                if 0 <= page_idx < len(st.session_state.photo_gallery):
-                    full_text_for_search += st.session_state.photo_gallery[page_idx].get('full_text', '')
+                full_text_for_search += st.session_state.photo_gallery[i].get('full_text', '')
 
-        ocr_end = time.time()
-        ocr_duration = ocr_end - ocr_start
+        ocr_duration = time.time() - ocr_start
 
         combined_input = "以下是各頁資料：\n"
         for i, data in enumerate(extracted_data_list):
-            if data is None: continue
-            page_num = data.get('page', i+1)
-            table_text = data.get('table', '')
-            header_text = data.get('header_text', '')
-            combined_input += f"\n=== Page {page_num} ===\n【頁首】:\n{header_text}\n【表格】:\n{table_text}\n"
+            if data:
+                combined_input += f"\n=== Page {data['page']} ===\n{data['header_text']}\n{data['table']}\n"
             
         status.text("總稽核 Agent 正在進行全方位分析...")
         
-        # --- 單一代理執行 ---
         t0 = time.time()
-        # 呼叫合併後的 Agent
         res_main = agent_unified_check(combined_input, full_text_for_search, GEMINI_KEY, main_model_name)
-        t1 = time.time()
-        time_main = t1 - t0
+        time_main = time.time() - t0
         
         progress_bar.progress(100)
         status.empty()
         
-        total_end = time.time()
-        
-        # --- 成本計算 (單次呼叫) ---
         usage_main = res_main.get("_token_usage", {"input": 0, "output": 0})
-        
-        # 費率判斷
-        def get_model_rate(model_name):
-            name = model_name.lower()
-            if "gpt" in name:
-                if "mini" in name: return 0.15, 0.60
-                elif "3.5" in name: return 0.50, 1.50
-                else: return 2.50, 10.00
-            else:
-                # Gemini 費率
-                if "flash" in name: return 0.075, 0.30
-                else: return 1.25, 5.00 # Pro
-
-        rate_in, rate_out = get_model_rate(main_model_name)
-        
-        cost_usd = (usage_main["input"] / 1_000_000 * rate_in) + (usage_main["output"] / 1_000_000 * rate_out)
-        cost_twd = cost_usd * 32.5
-        
-        # --- Python 表頭檢查 ---
         python_header_issues, python_debug_data = python_header_check(st.session_state.photo_gallery)
         
-        # --- 合併結果 ---
         ai_issues = res_main.get("issues", [])
-        for i in ai_issues: 
-            i['source'] = '🤖 總稽核 AI'
-            
-        all_issues = ai_issues + python_header_issues
+        for i in ai_issues: i['source'] = '🤖 總稽核 AI'
         
+        # 存入快取
         st.session_state.analysis_result_cache = {
             "job_no": res_main.get("job_no", "Unknown"),
-            "all_issues": all_issues,
-            "total_duration": total_end - total_start,
-            "cost_twd": cost_twd,
+            "all_issues": ai_issues + python_header_issues,
+            "total_duration": time.time() - total_start,
+            "cost_twd": (usage_main["input"]*0.075 + usage_main["output"]*0.3) / 1000000 * 32.5,
             "total_in": usage_main["input"],
             "total_out": usage_main["output"],
             "ocr_duration": ocr_duration,
-            "time_eng": time_main, # 這裡借用變數名，實為總時間
-            "time_acc": 0,         # 單一代理無第二時間
+            "time_eng": time_main,
             "full_text_for_search": full_text_for_search,
             "combined_input": combined_input,
             "python_debug_data": python_debug_data
         }
 
+    # --- 這是「顯示結果」的大方塊 (與 if trigger_analysis 對齊) ---
     if st.session_state.analysis_result_cache:
-    cache = st.session_state.analysis_result_cache
-            all_issues = cache['all_issues']
-            
-            st.success(f"工令: {cache['job_no']} | ⏱️ {cache['total_duration']:.1f}s")
-            st.info(f"💰 本次成本: NT$ {cache['cost_twd']:.2f} (In: {cache['total_in']:,} / Out: {cache['total_out']:,})")
-            st.caption(f"細節耗時: Azure OCR {cache['ocr_duration']:.1f}s | AI 分析 {cache['time_eng']:.1f}s")
+        cache = st.session_state.analysis_result_cache
+        all_issues = cache['all_issues']
+        
+        st.success(f"工令: {cache['job_no']} | ⏱️ {cache['total_duration']:.1f}s")
+        st.info(f"💰 本次成本: NT$ {cache['cost_twd']:.2f}")
         
         with st.expander("🔍 查看 AI 讀取到的 Excel 規則 (Debug)"):
             rules_text = get_dynamic_rules(cache['full_text_for_search'], debug_mode=True)
-            if "無特定規則" in rules_text:
-                st.caption("無匹配規則")
-            else:
-                st.markdown(rules_text)
+            st.markdownrules_text)
 
         with st.expander("🐍 查看 Python 硬邏輯偵測結果 (Debug)", expanded=False):
             if cache.get('python_debug_data'):
