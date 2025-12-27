@@ -895,7 +895,7 @@ def process_image_task(index, item):
             "python_debug_data": python_debug_data
         }
 
-            if st.session_state.analysis_result_cache:
+    if st.session_state.analysis_result_cache:
                 cache = st.session_state.analysis_result_cache
                 all_issues = cache['all_issues']
                 
