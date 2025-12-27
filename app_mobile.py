@@ -14,7 +14,7 @@ from collections import Counter
 import re
 
 # --- 1. 頁面設定 ---
-st.set_page_config(page_title="交貨單稽核(單一代理)", page_icon="🏭", layout="centered")
+st.set_page_config(page_title="交貨單稽核", page_icon="🏭", layout="centered")
 
 # --- CSS 樣式 ---
 st.markdown("""
@@ -619,7 +619,7 @@ def agent_unified_check(combined_input, full_text_for_search, api_key, model_nam
         return {"job_no": "Error", "issues": [{"item": "System Error", "common_reason": str(e)}], "_token_usage": {"input": 0, "output": 0}}
 
 # --- 6. 手機版 UI 與 核心執行邏輯 ---
-st.title("🏭 交貨單稽核(單一代理)")
+st.title("🏭 交貨單稽核")
 
 data_source = st.radio(
     "請選擇資料來源：", 
