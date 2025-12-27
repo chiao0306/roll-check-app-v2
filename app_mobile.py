@@ -766,7 +766,7 @@ if st.session_state.photo_gallery:
         
         ocr_start = time.time()
         
-        def process_image_task(index, item):
+def process_image_task(index, item):
     index = int(index)
     # 如果已經有資料了就不重複掃描
     if item.get('table_md') and item.get('header_text') and item.get('full_text'):
