@@ -766,23 +766,23 @@ if st.session_state.photo_gallery:
         
         ocr_start = time.time()
         
-    def process_image_task(index, item):
-    index = int(index)
-    # 如果已經有資料了就不重複掃描
-    if item.get('table_md') and item.get('header_text') and item.get('full_text'):
-        real_page = item.get('real_page', str(index + 1))
-        return index, item['table_md'], item['header_text'], item['full_text'], None, real_page, None
+        def process_image_task(index, item):
+            index = int(index)
+            # 如果已經有資料了就不重複掃描
+            if item.get('table_md') and item.get('header_text') and item.get('full_text'):
+                real_page = item.get('real_page', str(index + 1))
+                return index, item['table_md'], item['header_text'], item['full_text'], None, real_page, None
     
-    try:
-        if item.get('file') is None:
-            return index, None, None, None, None, None, "無圖片檔案"
-        
-        item['file'].seek(0)
-        # 這裡會接到我們剛才修改後回傳的 None
-        table_md, header, full, _, real_page = extract_layout_with_azure(item['file'], DOC_ENDPOINT, DOC_KEY)
-        return index, table_md, header, full, None, real_page, None
-    except Exception as e:
-        return index, None, None, None, None, None, f"OCR失敗: {str(e)}"
+            try:
+                if item.get('file') is None:
+                    return index, None, None, None, None, None, "無圖片檔案"
+                
+                item['file'].seek(0)
+                # 這裡會接到我們剛才修改後回傳的 None
+                table_md, header, full, _, real_page = extract_layout_with_azure(item['file'], DOC_ENDPOINT, DOC_KEY)
+                return index, table_md, header, full, None, real_page, None
+            except Exception as e:
+                return index, None, None, None, None, None, f"OCR失敗: {str(e)}"
 
         status.text(f"Azure 正在平行掃描 {total_imgs} 頁文件...")
 
