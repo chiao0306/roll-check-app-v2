@@ -896,12 +896,12 @@ def process_image_task(index, item):
         }
 
     if st.session_state.analysis_result_cache:
-                cache = st.session_state.analysis_result_cache
-                all_issues = cache['all_issues']
-                
-                st.success(f"工令: {cache['job_no']} | ⏱️ {cache['total_duration']:.1f}s")
-                st.info(f"💰 本次成本: NT$ {cache['cost_twd']:.2f} (In: {cache['total_in']:,} / Out: {cache['total_out']:,})")
-                st.caption(f"細節耗時: Azure OCR {cache['ocr_duration']:.1f}s | AI 分析 {cache['time_eng']:.1f}s")
+            cache = st.session_state.analysis_result_cache
+            all_issues = cache['all_issues']
+            
+            st.success(f"工令: {cache['job_no']} | ⏱️ {cache['total_duration']:.1f}s")
+            st.info(f"💰 本次成本: NT$ {cache['cost_twd']:.2f} (In: {cache['total_in']:,} / Out: {cache['total_out']:,})")
+            st.caption(f"細節耗時: Azure OCR {cache['ocr_duration']:.1f}s | AI 分析 {cache['time_eng']:.1f}s")
         
         with st.expander("🔍 查看 AI 讀取到的 Excel 規則 (Debug)"):
             rules_text = get_dynamic_rules(cache['full_text_for_search'], debug_mode=True)
