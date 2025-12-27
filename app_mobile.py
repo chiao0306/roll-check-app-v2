@@ -896,7 +896,7 @@ def process_image_task(index, item):
         }
 
     if st.session_state.analysis_result_cache:
-            cache = st.session_state.analysis_result_cache
+    cache = st.session_state.analysis_result_cache
             all_issues = cache['all_issues']
             
             st.success(f"工令: {cache['job_no']} | ⏱️ {cache['total_duration']:.1f}s")
