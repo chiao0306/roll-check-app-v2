@@ -458,7 +458,7 @@ def agent_unified_check(combined_input, full_text_for_search, api_key, model_nam
         - 數值：該項目的計數結果。
 
     **A. 雙軌聚合模式 (Aggregated Mode)**
-    *   **觸發條件**：當左上角項目名稱 **同時包含** 「ROLL」 與 「車修 / 銲補 / 拆裝」其中之一時。
+    *   **觸發條件**：當左上角項目名稱 **包含**「機ROLL 車修」、「機ROLL 銲補」、「機ROLL 拆裝」其中之一時。
         *   *(例如："W3 #1機 ROLL 車修", "ROLL 銲補")*
         **加總清單**：必須明確列出各頁被計入的子項（如：本體未再生(P.2): 5, 軸頸再生(P.3): 2...）。
     *   **加總範圍 (預設)**：
