@@ -735,7 +735,8 @@ with st.container(border=True):
 if st.session_state.photo_gallery:
     st.caption(f"已累積 {len(st.session_state.photo_gallery)} 頁文件")
     col_btn1, col_btn2 = st.columns([1, 1], gap="small")
-    with col_btn1: start_btn = st.button("🚀 開始分析", type="primary", use_container_width=True)
+    with col_btn1: 
+        start_btn = st.button("🚀 開始分析", type="primary", use_container_width=True)
     with col_btn2: 
         clear_btn = st.button("🗑️照片清除", help="清除", use_container_width=True)
 
@@ -753,10 +754,9 @@ if st.session_state.photo_gallery:
     if 'analysis_result_cache' not in st.session_state:
         st.session_state.analysis_result_cache = None
 
-   # --- 這是變數定義區 ---
     trigger_analysis = start_btn or is_auto_start
 
-    # --- 這是「執行分析」的大方塊 ---
+    # --- 核心分析區塊 ---
     if trigger_analysis:
         total_start = time.time()
         status = st.empty()
@@ -768,7 +768,6 @@ if st.session_state.photo_gallery:
         
         ocr_start = time.time()
         
-        # 定義小工具 (必須縮排在 if 裡面)
         def process_image_task(index, item):
             index = int(index)
             if item.get('table_md') and item.get('header_text') and item.get('full_text'):
@@ -779,7 +778,6 @@ if st.session_state.photo_gallery:
                 if item.get('file') is None:
                     return index, None, None, None, None, None, "無圖片檔案"
                 item['file'].seek(0)
-                # 修改：丟棄原始 JSON 省記憶體
                 table_md, header, full, _, r_page = extract_layout_with_azure(item['file'], DOC_ENDPOINT, DOC_KEY)
                 return index, table_md, header, full, None, r_page, None
             except Exception as e:
@@ -787,7 +785,6 @@ if st.session_state.photo_gallery:
 
         status.text(f"Azure 正在平行掃描 {total_imgs} 頁文件...")
 
-        # 這裡所有的動作都要縮排，代表「只有按下按鈕才執行」
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             futures = []
             for i, item in enumerate(st.session_state.photo_gallery):
@@ -811,6 +808,7 @@ if st.session_state.photo_gallery:
                         "table": t_md or "", 
                         "header_text": h_txt or ""
                     }
+                
                 completed_count += 1
                 progress_bar.progress(completed_count / (total_imgs + 1))
         
@@ -839,11 +837,11 @@ if st.session_state.photo_gallery:
         
         ai_issues = res_main.get("issues", [])
         for i in ai_issues: i['source'] = '🤖 總稽核 AI'
+        all_issues = ai_issues + python_header_issues
         
-        # 存入快取
         st.session_state.analysis_result_cache = {
             "job_no": res_main.get("job_no", "Unknown"),
-            "all_issues": ai_issues + python_header_issues,
+            "all_issues": all_issues,
             "total_duration": time.time() - total_start,
             "cost_twd": (usage_main["input"]*0.075 + usage_main["output"]*0.3) / 1000000 * 32.5,
             "total_in": usage_main["input"],
@@ -855,7 +853,7 @@ if st.session_state.photo_gallery:
             "python_debug_data": python_debug_data
         }
 
-    # --- 這是「顯示結果」的大方塊 (與 if trigger_analysis 對齊) ---
+    # --- 顯示結果區塊 (重要：必須與上面的 if trigger_analysis 對齊) ---
     if st.session_state.analysis_result_cache:
         cache = st.session_state.analysis_result_cache
         all_issues = cache['all_issues']
@@ -865,146 +863,37 @@ if st.session_state.photo_gallery:
         
         with st.expander("🔍 查看 AI 讀取到的 Excel 規則 (Debug)"):
             rules_text = get_dynamic_rules(cache['full_text_for_search'], debug_mode=True)
-            st.markdownrules_text)
+            st.markdown(rules_text)
 
-        with st.expander("🐍 查看 Python 硬邏輯偵測結果 (Debug)", expanded=False):
-            if cache.get('python_debug_data'):
-                p_data = cache['python_debug_data']
-                standard_data = {}
-                all_values = {"工令編號": [], "預定交貨": [], "實際交貨": []}
-                for page in p_data:
-                    for k in all_values.keys():
-                        if page.get(k) and page[k] != "N/A":
-                            all_values[k].append(page[k])
-                
-                standard_row = {"頁碼": "🏆 判定標準"}
-                for k, v in all_values.items():
-                    if v:
-                        standard_row[k] = Counter(v).most_common(1)[0][0]
-                    else:
-                        standard_row[k] = "N/A"
-                
-                final_df_data = [standard_row] + p_data
-                st.dataframe(final_df_data, use_container_width=True, hide_index=True)
-                st.info("💡 「判定標準」是依據多數決產生的。")
-            else:
-                st.caption("無偵測資料")
-
-        real_errors = [i for i in all_issues if "未匹配" not in i.get('issue_type', '')]
-        
-        if not real_errors:
-            st.balloons()
-            if not all_issues:
-                st.success("✅ 全數合格！")
-            else:
-                st.success(f"✅ 數值全數合格！ (但有 {len(all_issues)} 個項目未匹配規則，請檢查)")
-        else:
-            st.error(f"發現 {len(real_errors)} 類數值異常，另有 {len(all_issues) - len(real_errors)} 個項目未匹配規則")
-
+        # 這裡是顯示異常項目的迴圈
         for item in all_issues:
             with st.container(border=True):
                 c1, c2 = st.columns([3, 1])
+                c1.markdown(f"**P.{item.get('page', '?')} | {item.get('item')}**")
                 
-                source_label = item.get('source', '')
-                rule_source = item.get('rule_used', '系統預設邏輯')
-                issue_type = item.get('issue_type', '異常')
-                common_reason = item.get('common_reason', '')
+                i_type = item.get('issue_type', '異常')
+                if "未匹配" in i_type: 
+                    c2.warning("⚠️ 未匹配")
+                else: 
+                    c2.error(f"🛑 {i_type}")
                 
-                c1.markdown(f"**P.{item.get('page', '?')} | {item.get('item')}**  `{source_label}`")
-                
-                if "Excel" in rule_source:
-                    c1.caption(f"📜 判斷依據: :blue-background[{rule_source}]")
-                elif "無對應" in rule_source or "盲測" in rule_source:
-                    c1.caption(f"⚠️ 判斷依據: :grey-background[❓ 無對應規則 (盲測)]")
-                else:
-                    c1.caption(f"🤖 判斷依據: {rule_source}")
-                
-                if "未匹配" in issue_type:
-                    if "合格" in common_reason:
-                        c2.warning(f"⚠️ 未匹配") 
-                    else:
-                        c2.error(f"🛑 未匹配超規") 
-                elif "流程" in issue_type or "尺寸" in issue_type or "統計" in issue_type:
-                    c2.error(f"🛑 {issue_type}")
-                else:
-                    c2.warning(f"⚠️ {issue_type}")
-                
-                st.caption(f"原因: {common_reason}")
-                
-                spec = item.get('spec_logic') or item.get('target_spec')
-                if spec: st.caption(f"標準: {spec}")
-                
-                if item.get('verification_logic'): st.caption(f"驗證: {item.get('verification_logic')}")
+                st.caption(f"原因: {item.get('common_reason', '')}")
                 
                 failures = item.get('failures', [])
                 if failures:
-                    table_data = []
-                    for f in failures:
-                        if isinstance(f, dict):
-                            row = {
-                                "滾輪編號": f.get('id', '未知'), 
-                                "實測/計數": f.get('val', 'N/A')
-                            }
-                            if f.get('calc'): row["差值/備註"] = f.get('calc')
-                            if f.get('target'): row["規格/備註"] = f.get('target')
-                            table_data.append(row)
-                        elif isinstance(f, str):
-                            table_data.append({"滾輪編號": "-", "內容": f})
-                    if table_data:
-                        st.dataframe(table_data, use_container_width=True, hide_index=True)
-                
-                elif 'roll_id' in item:
-                    table_data = [{
-                        "滾輪編號": item.get('roll_id'),
-                        "實測值": item.get('raw_value'),
-                        "規格": item.get('target_spec')
-                    }]
-                    st.dataframe(table_data, use_container_width=True, hide_index=True)
-                else:
-                    st.text(f"實測數據: {item.get('measured', 'N/A')}")
-        
-        st.divider()
+                    st.dataframe(failures, use_container_width=True, hide_index=True)
 
-        current_job_no = cache.get('job_no', 'Unknown')
-        safe_job_no = current_job_no.replace("/", "_").replace("\\", "_").strip()
-        file_name_str = f"{safe_job_no}_cleaned.json"
-
-        # 準備匯出資料
-        export_data = []
-        for item in st.session_state.photo_gallery:
-            export_data.append({
-                "table_md": item.get('table_md'),
-                "header_text": item.get('header_text'),
-                "full_text": item.get('full_text'),
-                "raw_json": item.get('raw_json')
-            })
-        json_str = json.dumps(export_data, indent=2, ensure_ascii=False)
-
-        st.subheader("💾 測試資料存檔")
-        st.caption(f"已識別工令：**{current_job_no}**。下載後可供下次測試使用。")
-        
-        st.download_button(
-            label=f"⬇️ 下載測試資料 ({file_name_str})",
-            data=json_str,
-            file_name=file_name_str,
-            mime="application/json",
-            type="primary"
-        )
-
-        with st.expander("👀 查看傳給 AI 的最終文字 (Prompt Input)"):
-            st.caption("這才是 AI 真正讀到的內容 (已過濾雜訊)：")
-            st.code(cache['combined_input'], language='markdown')
-    
-    if st.session_state.photo_gallery and st.session_state.get('source_mode') != 'json':
-        st.caption("已拍攝照片：")
-        cols = st.columns(4)
-        for idx, item in enumerate(st.session_state.photo_gallery):
-            with cols[idx % 4]:
-                if item.get('file'):
-                    st.image(item['file'], caption=f"P.{idx+1}", use_container_width=True)
-                if st.button("❌", key=f"del_{idx}"):
-                    st.session_state.photo_gallery.pop(idx)
-                    st.session_state.analysis_result_cache = None
-                    st.rerun()
-else:
-    st.info("👆 請點擊上方按鈕開始新增照片")
+# --- 預覽圖區塊 ---
+if st.session_state.photo_gallery and st.session_state.get('source_mode') == 'image':
+    st.caption("已拍攝照片 (分析後為節省記憶體會自動隱藏)：")
+    cols = st.columns(4)
+    for idx, item in enumerate(st.session_state.photo_gallery):
+        with cols[idx % 4]:
+            if item.get('file'):
+                st.image(item['file'], caption=f"P.{idx+1}", use_container_width=True)
+            if st.button("❌", key=f"del_{idx}"):
+                st.session_state.photo_gallery.pop(idx)
+                st.session_state.analysis_result_cache = None
+                st.rerun()
+elif not st.session_state.photo_gallery:
+    st.info("👆 請點擊上方按鈕開始新增照片或上傳檔案")
