@@ -1,3 +1,4 @@
+
 import streamlit as st
 import streamlit.components.v1 as components
 from azure.core.credentials import AzureKeyCredential
@@ -735,8 +736,7 @@ with st.container(border=True):
 if st.session_state.photo_gallery:
     st.caption(f"已累積 {len(st.session_state.photo_gallery)} 頁文件")
     col_btn1, col_btn2 = st.columns([1, 1], gap="small")
-    with col_btn1: 
-        start_btn = st.button("🚀 開始分析", type="primary", use_container_width=True)
+    with col_btn1: start_btn = st.button("🚀 開始分析", type="primary", use_container_width=True)
     with col_btn2: 
         clear_btn = st.button("🗑️照片清除", help="清除", use_container_width=True)
 
@@ -756,7 +756,6 @@ if st.session_state.photo_gallery:
 
     trigger_analysis = start_btn or is_auto_start
 
-    # --- 核心分析區塊 ---
     if trigger_analysis:
         total_start = time.time()
         status = st.empty()
@@ -768,20 +767,23 @@ if st.session_state.photo_gallery:
         
         ocr_start = time.time()
         
-        def process_image_task(index, item):
-            index = int(index)
-            if item.get('table_md') and item.get('header_text') and item.get('full_text'):
-                r_page = item.get('real_page', str(index + 1))
-                return index, item['table_md'], item['header_text'], item['full_text'], None, r_page, None
-            
-            try:
-                if item.get('file') is None:
-                    return index, None, None, None, None, None, "無圖片檔案"
-                item['file'].seek(0)
-                table_md, header, full, _, r_page = extract_layout_with_azure(item['file'], DOC_ENDPOINT, DOC_KEY)
-                return index, table_md, header, full, None, r_page, None
-            except Exception as e:
-                return index, None, None, None, None, None, f"OCR失敗: {str(e)}"
+    def process_image_task(index, item):
+    index = int(index)
+    # 如果已經有資料了就不重複掃描
+    if item.get('table_md') and item.get('header_text') and item.get('full_text'):
+        real_page = item.get('real_page', str(index + 1))
+        return index, item['table_md'], item['header_text'], item['full_text'], None, real_page, None
+    
+    try:
+        if item.get('file') is None:
+            return index, None, None, None, None, None, "無圖片檔案"
+        
+        item['file'].seek(0)
+        # 這裡會接到我們剛才修改後回傳的 None
+        table_md, header, full, _, real_page = extract_layout_with_azure(item['file'], DOC_ENDPOINT, DOC_KEY)
+        return index, table_md, header, full, None, real_page, None
+    except Exception as e:
+        return index, None, None, None, None, None, f"OCR失敗: {str(e)}"
 
         status.text(f"Azure 正在平行掃描 {total_imgs} 頁文件...")
 
@@ -795,13 +797,15 @@ if st.session_state.photo_gallery:
                 idx, t_md, h_txt, f_txt, raw_j, r_page, err = future.result()
                 idx = int(idx)
                 
-                if not err:
+                if err:
+                    st.error(f"第 {idx+1} 頁讀取失敗: {err}")
+                    extracted_data_list[idx] = None
+                else:
                     st.session_state.photo_gallery[idx]['table_md'] = t_md
                     st.session_state.photo_gallery[idx]['header_text'] = h_txt
                     st.session_state.photo_gallery[idx]['full_text'] = f_txt
-                    st.session_state.photo_gallery[idx]['raw_json'] = None
+                    st.session_state.photo_gallery[idx]['raw_json'] = raw_j
                     st.session_state.photo_gallery[idx]['real_page'] = r_page
-                    st.session_state.photo_gallery[idx]['file'] = None # 釋放圖片
                     
                     extracted_data_list[idx] = {
                         "page": r_page,
@@ -814,86 +818,233 @@ if st.session_state.photo_gallery:
         
         for i, data in enumerate(extracted_data_list):
             if data and isinstance(data, dict):
-                full_text_for_search += st.session_state.photo_gallery[i].get('full_text', '')
+                page_idx = i
+                if 0 <= page_idx < len(st.session_state.photo_gallery):
+                    full_text_for_search += st.session_state.photo_gallery[page_idx].get('full_text', '')
 
-        ocr_duration = time.time() - ocr_start
+        ocr_end = time.time()
+        ocr_duration = ocr_end - ocr_start
 
         combined_input = "以下是各頁資料：\n"
         for i, data in enumerate(extracted_data_list):
-            if data:
-                combined_input += f"\n=== Page {data['page']} ===\n{data['header_text']}\n{data['table']}\n"
+            if data is None: continue
+            page_num = data.get('page', i+1)
+            table_text = data.get('table', '')
+            header_text = data.get('header_text', '')
+            combined_input += f"\n=== Page {page_num} ===\n【頁首】:\n{header_text}\n【表格】:\n{table_text}\n"
             
         status.text("總稽核 Agent 正在進行全方位分析...")
         
+        # --- 單一代理執行 ---
         t0 = time.time()
+        # 呼叫合併後的 Agent
         res_main = agent_unified_check(combined_input, full_text_for_search, GEMINI_KEY, main_model_name)
-        time_main = time.time() - t0
+        t1 = time.time()
+        time_main = t1 - t0
         
         progress_bar.progress(100)
         status.empty()
         
+        total_end = time.time()
+        
+        # --- 成本計算 (單次呼叫) ---
         usage_main = res_main.get("_token_usage", {"input": 0, "output": 0})
+        
+        # 費率判斷
+        def get_model_rate(model_name):
+            name = model_name.lower()
+            if "gpt" in name:
+                if "mini" in name: return 0.15, 0.60
+                elif "3.5" in name: return 0.50, 1.50
+                else: return 2.50, 10.00
+            else:
+                # Gemini 費率
+                if "flash" in name: return 0.075, 0.30
+                else: return 1.25, 5.00 # Pro
+
+        rate_in, rate_out = get_model_rate(main_model_name)
+        
+        cost_usd = (usage_main["input"] / 1_000_000 * rate_in) + (usage_main["output"] / 1_000_000 * rate_out)
+        cost_twd = cost_usd * 32.5
+        
+        # --- Python 表頭檢查 ---
         python_header_issues, python_debug_data = python_header_check(st.session_state.photo_gallery)
         
+        # --- 合併結果 ---
         ai_issues = res_main.get("issues", [])
-        for i in ai_issues: i['source'] = '🤖 總稽核 AI'
+        for i in ai_issues: 
+            i['source'] = '🤖 總稽核 AI'
+            
         all_issues = ai_issues + python_header_issues
         
         st.session_state.analysis_result_cache = {
             "job_no": res_main.get("job_no", "Unknown"),
             "all_issues": all_issues,
-            "total_duration": time.time() - total_start,
-            "cost_twd": (usage_main["input"]*0.075 + usage_main["output"]*0.3) / 1000000 * 32.5,
+            "total_duration": total_end - total_start,
+            "cost_twd": cost_twd,
             "total_in": usage_main["input"],
             "total_out": usage_main["output"],
             "ocr_duration": ocr_duration,
-            "time_eng": time_main,
+            "time_eng": time_main, # 這裡借用變數名，實為總時間
+            "time_acc": 0,         # 單一代理無第二時間
             "full_text_for_search": full_text_for_search,
             "combined_input": combined_input,
             "python_debug_data": python_debug_data
         }
 
-    # --- 顯示結果區塊 (重要：必須與上面的 if trigger_analysis 對齊) ---
     if st.session_state.analysis_result_cache:
         cache = st.session_state.analysis_result_cache
         all_issues = cache['all_issues']
         
         st.success(f"工令: {cache['job_no']} | ⏱️ {cache['total_duration']:.1f}s")
-        st.info(f"💰 本次成本: NT$ {cache['cost_twd']:.2f}")
+        st.info(f"💰 本次成本: NT$ {cache['cost_twd']:.2f} (In: {cache['total_in']:,} / Out: {cache['total_out']:,})")
+        st.caption(f"細節耗時: Azure OCR {cache['ocr_duration']:.1f}s | AI 分析 {cache['time_eng']:.1f}s")
         
         with st.expander("🔍 查看 AI 讀取到的 Excel 規則 (Debug)"):
             rules_text = get_dynamic_rules(cache['full_text_for_search'], debug_mode=True)
-            st.markdown(rules_text)
+            if "無特定規則" in rules_text:
+                st.caption("無匹配規則")
+            else:
+                st.markdown(rules_text)
 
-        # 這裡是顯示異常項目的迴圈
+        with st.expander("🐍 查看 Python 硬邏輯偵測結果 (Debug)", expanded=False):
+            if cache.get('python_debug_data'):
+                p_data = cache['python_debug_data']
+                standard_data = {}
+                all_values = {"工令編號": [], "預定交貨": [], "實際交貨": []}
+                for page in p_data:
+                    for k in all_values.keys():
+                        if page.get(k) and page[k] != "N/A":
+                            all_values[k].append(page[k])
+                
+                standard_row = {"頁碼": "🏆 判定標準"}
+                for k, v in all_values.items():
+                    if v:
+                        standard_row[k] = Counter(v).most_common(1)[0][0]
+                    else:
+                        standard_row[k] = "N/A"
+                
+                final_df_data = [standard_row] + p_data
+                st.dataframe(final_df_data, use_container_width=True, hide_index=True)
+                st.info("💡 「判定標準」是依據多數決產生的。")
+            else:
+                st.caption("無偵測資料")
+
+        real_errors = [i for i in all_issues if "未匹配" not in i.get('issue_type', '')]
+        
+        if not real_errors:
+            st.balloons()
+            if not all_issues:
+                st.success("✅ 全數合格！")
+            else:
+                st.success(f"✅ 數值全數合格！ (但有 {len(all_issues)} 個項目未匹配規則，請檢查)")
+        else:
+            st.error(f"發現 {len(real_errors)} 類數值異常，另有 {len(all_issues) - len(real_errors)} 個項目未匹配規則")
+
         for item in all_issues:
             with st.container(border=True):
                 c1, c2 = st.columns([3, 1])
-                c1.markdown(f"**P.{item.get('page', '?')} | {item.get('item')}**")
                 
-                i_type = item.get('issue_type', '異常')
-                if "未匹配" in i_type: 
-                    c2.warning("⚠️ 未匹配")
-                else: 
-                    c2.error(f"🛑 {i_type}")
+                source_label = item.get('source', '')
+                rule_source = item.get('rule_used', '系統預設邏輯')
+                issue_type = item.get('issue_type', '異常')
+                common_reason = item.get('common_reason', '')
                 
-                st.caption(f"原因: {item.get('common_reason', '')}")
+                c1.markdown(f"**P.{item.get('page', '?')} | {item.get('item')}**  `{source_label}`")
+                
+                if "Excel" in rule_source:
+                    c1.caption(f"📜 判斷依據: :blue-background[{rule_source}]")
+                elif "無對應" in rule_source or "盲測" in rule_source:
+                    c1.caption(f"⚠️ 判斷依據: :grey-background[❓ 無對應規則 (盲測)]")
+                else:
+                    c1.caption(f"🤖 判斷依據: {rule_source}")
+                
+                if "未匹配" in issue_type:
+                    if "合格" in common_reason:
+                        c2.warning(f"⚠️ 未匹配") 
+                    else:
+                        c2.error(f"🛑 未匹配超規") 
+                elif "流程" in issue_type or "尺寸" in issue_type or "統計" in issue_type:
+                    c2.error(f"🛑 {issue_type}")
+                else:
+                    c2.warning(f"⚠️ {issue_type}")
+                
+                st.caption(f"原因: {common_reason}")
+                
+                spec = item.get('spec_logic') or item.get('target_spec')
+                if spec: st.caption(f"標準: {spec}")
+                
+                if item.get('verification_logic'): st.caption(f"驗證: {item.get('verification_logic')}")
                 
                 failures = item.get('failures', [])
                 if failures:
-                    st.dataframe(failures, use_container_width=True, hide_index=True)
+                    table_data = []
+                    for f in failures:
+                        if isinstance(f, dict):
+                            row = {
+                                "滾輪編號": f.get('id', '未知'), 
+                                "實測/計數": f.get('val', 'N/A')
+                            }
+                            if f.get('calc'): row["差值/備註"] = f.get('calc')
+                            if f.get('target'): row["規格/備註"] = f.get('target')
+                            table_data.append(row)
+                        elif isinstance(f, str):
+                            table_data.append({"滾輪編號": "-", "內容": f})
+                    if table_data:
+                        st.dataframe(table_data, use_container_width=True, hide_index=True)
+                
+                elif 'roll_id' in item:
+                    table_data = [{
+                        "滾輪編號": item.get('roll_id'),
+                        "實測值": item.get('raw_value'),
+                        "規格": item.get('target_spec')
+                    }]
+                    st.dataframe(table_data, use_container_width=True, hide_index=True)
+                else:
+                    st.text(f"實測數據: {item.get('measured', 'N/A')}")
+        
+        st.divider()
 
-# --- 預覽圖區塊 ---
-if st.session_state.photo_gallery and st.session_state.get('source_mode') == 'image':
-    st.caption("已拍攝照片 (分析後為節省記憶體會自動隱藏)：")
-    cols = st.columns(4)
-    for idx, item in enumerate(st.session_state.photo_gallery):
-        with cols[idx % 4]:
-            if item.get('file'):
-                st.image(item['file'], caption=f"P.{idx+1}", use_container_width=True)
-            if st.button("❌", key=f"del_{idx}"):
-                st.session_state.photo_gallery.pop(idx)
-                st.session_state.analysis_result_cache = None
-                st.rerun()
-elif not st.session_state.photo_gallery:
-    st.info("👆 請點擊上方按鈕開始新增照片或上傳檔案")
+        current_job_no = cache.get('job_no', 'Unknown')
+        safe_job_no = current_job_no.replace("/", "_").replace("\\", "_").strip()
+        file_name_str = f"{safe_job_no}_cleaned.json"
+
+        # 準備匯出資料
+        export_data = []
+        for item in st.session_state.photo_gallery:
+            export_data.append({
+                "table_md": item.get('table_md'),
+                "header_text": item.get('header_text'),
+                "full_text": item.get('full_text'),
+                "raw_json": item.get('raw_json')
+            })
+        json_str = json.dumps(export_data, indent=2, ensure_ascii=False)
+
+        st.subheader("💾 測試資料存檔")
+        st.caption(f"已識別工令：**{current_job_no}**。下載後可供下次測試使用。")
+        
+        st.download_button(
+            label=f"⬇️ 下載測試資料 ({file_name_str})",
+            data=json_str,
+            file_name=file_name_str,
+            mime="application/json",
+            type="primary"
+        )
+
+        with st.expander("👀 查看傳給 AI 的最終文字 (Prompt Input)"):
+            st.caption("這才是 AI 真正讀到的內容 (已過濾雜訊)：")
+            st.code(cache['combined_input'], language='markdown')
+    
+    if st.session_state.photo_gallery and st.session_state.get('source_mode') != 'json':
+        st.caption("已拍攝照片：")
+        cols = st.columns(4)
+        for idx, item in enumerate(st.session_state.photo_gallery):
+            with cols[idx % 4]:
+                if item.get('file'):
+                    st.image(item['file'], caption=f"P.{idx+1}", use_container_width=True)
+                if st.button("❌", key=f"del_{idx}"):
+                    st.session_state.photo_gallery.pop(idx)
+                    st.session_state.analysis_result_cache = None
+                    st.rerun()
+else:
+    st.info("👆 請點擊上方按鈕開始新增照片")
