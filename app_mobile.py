@@ -287,7 +287,7 @@ def extract_layout_with_azure(file_obj, endpoint, key):
         full_content_text = ""
         header_snippet = ""
 
-    return markdown_output, header_snippet, full_content_text, result.as_dict(), real_page_num
+    return markdown_output, header_snippet, full_content_text, None, real_page_num
 
 # --- Python 硬邏輯：表頭一致性檢查 (長度敏感版) ---
 def python_header_check(photo_gallery):
@@ -767,20 +767,22 @@ if st.session_state.photo_gallery:
         ocr_start = time.time()
         
         def process_image_task(index, item):
-            index = int(index)
-            if item.get('table_md') and item.get('header_text') and item.get('full_text'):
-                real_page = item.get('real_page', str(index + 1))
-                return index, item['table_md'], item['header_text'], item['full_text'], item.get('raw_json'), real_page, None
-            
-            try:
-                if item.get('file') is None:
-                    return index, None, None, None, None, None, "無圖片檔案"
-                
-                item['file'].seek(0)
-                table_md, header, full, raw, real_page = extract_layout_with_azure(item['file'], DOC_ENDPOINT, DOC_KEY)
-                return index, table_md, header, full, raw, real_page, None
-            except Exception as e:
-                return index, None, None, None, None, None, f"OCR失敗: {str(e)}"
+    index = int(index)
+    # 如果已經有資料了就不重複掃描
+    if item.get('table_md') and item.get('header_text') and item.get('full_text'):
+        real_page = item.get('real_page', str(index + 1))
+        return index, item['table_md'], item['header_text'], item['full_text'], None, real_page, None
+    
+    try:
+        if item.get('file') is None:
+            return index, None, None, None, None, None, "無圖片檔案"
+        
+        item['file'].seek(0)
+        # 這裡會接到我們剛才修改後回傳的 None
+        table_md, header, full, _, real_page = extract_layout_with_azure(item['file'], DOC_ENDPOINT, DOC_KEY)
+        return index, table_md, header, full, None, real_page, None
+    except Exception as e:
+        return index, None, None, None, None, None, f"OCR失敗: {str(e)}"
 
         status.text(f"Azure 正在平行掃描 {total_imgs} 頁文件...")
 
@@ -1031,14 +1033,6 @@ if st.session_state.photo_gallery:
         with st.expander("👀 查看傳給 AI 的最終文字 (Prompt Input)"):
             st.caption("這才是 AI 真正讀到的內容 (已過濾雜訊)：")
             st.code(cache['combined_input'], language='markdown')
-            
-        st.markdown("### 🔍 Azure OCR 原始資料 (Debug)")
-        for i, item in enumerate(st.session_state.photo_gallery):
-            with st.expander(f"📄 第 {i+1} 頁 Raw JSON", expanded=False):
-                if item.get('raw_json'):
-                    st.json(item.get('raw_json'))
-                else:
-                    st.caption("尚未取得資料")
     
     if st.session_state.photo_gallery and st.session_state.get('source_mode') != 'json':
         st.caption("已拍攝照片：")
